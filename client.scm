@@ -4,11 +4,18 @@
 (define commands
   '("login mateus mateus"
     "compra PTBR 10 10"
-    "compra PTBR 15 15"
-    "vende PTBR 1.50 30"
+    "compra EUA 15 15"
+    "compra PTBR 3 3.33"
+    "compra PTBR 5 25"
+    "vende EUA 30 1.50"
+    "vende EUA 25 45.50"
+    "vende EUA 32 32.50"
+    "vende ptbr 30 27.50"
+    "vende ptbr 11 5.50"
     "ativas PTBR"
     "catalogo"
-    ))
+    "lista PTBR"
+    "lista EUA"))
 
 (let run-commands ((commands commands))
  (if (null? commands)

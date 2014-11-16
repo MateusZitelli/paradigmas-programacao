@@ -27,6 +27,12 @@
            (hts! h next-key (make-hash-table))
            (enter (htr h next-key) (cdr l))))))))
 
+(define (take l n)
+  (if (or (null? l) (= n 0))
+    (list)
+    (cons (car l)
+          (take (cdr l) (- n 1)))))
+
 ; --- File handling functions ---
 (define (save-data configs file-name)
   (let ((out (open-output-file file-name)))
@@ -196,9 +202,37 @@
                 ((eq? (car action) 'buy)
                  (display "compras" out)))
           (newline out)
-          (display index)) out))
+          (display (hash-table->alist (cdr action)) out))
          (newline out)
          (show-list (cdr actions)))))))
+
+(define (list-all-actions active db out)
+  (let ((active-table (ht-navigate/create db (list 'orders active))))
+   (hash-table-map active-table
+    (lambda (action operations)
+      (let 
+        ((top20-sorted-orders 
+           (take
+             (sort (hash-table->alist operations)
+                   (lambda (v0 v1)
+                     (cond ((eq? action 'sell)
+                            (< (caddr v0) (caddr v1)))
+                           ((eq? action 'buy)
+                            (> (caddr v0) (caddr v1))))))
+             20)))
+       (map 
+         (lambda (line)
+           (let ((key (car line)) (quantity/value (cdr line)))
+            (display key out) (display " " out)
+            (cond ((eq? action 'sell)
+                   (display "V " out))
+                  ((eq? action 'buy)
+                   (display "C " out)))
+            (display (car quantity/value) out) (display " " out)
+            (display (cadr quantity/value) out) (display " " out)
+            (newline out)))
+         top20-sorted-orders))))))
+
 
 ; --- Sessions ---
 (define (construct-session login db out)
@@ -221,12 +255,14 @@
                  (apply cancel args))
                 ((string-ci=? op-type "catalogo")
                  (show-available-actives db out))
+                ((string-ci=? op-type "ativas")
+                 (apply actives args))
+                ((string-ci=? op-type "lista")
+                 (list-all-actions (car args) db out))
                 ((string-ci=? op-type "fui")
                  (begin
                    (set-car! session '())
-                   (send-ok out)))
-                ((string-ci=? op-type "ativas")
-                 (apply actives args))))))))
+                   (send-ok out)))))))))
 
 (define (get-session login pass db out)
   (if (validate-or-create-new-user login pass db)
