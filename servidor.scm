@@ -1,6 +1,9 @@
 (use crypt) ; For save passwords
 (use srfi-1)
 (use srfi-69) ; Implements hash-tables
+(use tcp srfi-18)
+
+(define port 9009)
 
 ; --- Errors ----
 (define invalid-user "001")
@@ -94,20 +97,20 @@
   (call-with-input-file actions-file split-lines-from-port))
 
 ; --- Server responses ---
-(define (send-message message)
-  (display message)
-  (newline))
+(define (send-message message out)
+  (display message out)
+  (newline out))
 
-(define (send-error error-code)
-  (send-message (string-concatenate (list "ERROR " error-code))))
+(define (send-error error-code out)
+  (send-message (string-concatenate (list "ERROR " error-code)) out))
 
-(define (send-ok)
-  (send-message "OK"))
+(define (send-ok out)
+  (send-message "OK" out))
 
-(define (send-ok-w-code code)
-  (display "OK ")
-  (display code)
-  (newline))
+(define (send-ok-w-code code out)
+  (display "OK " out)
+  (display code out)
+  (newline out))
 
 ; --- Login ---
 (define (validate-or-create-new-user login pass db)
@@ -141,7 +144,7 @@
           old-order-num))))))
 
 (define (order-constructor user-operations user-operations-by-id db order-type)
-  (lambda (active quantity value)
+  (lambda (active quantity value out)
     (let ((actives-list (htr db 'actives-list)))
      (if (or (eq? order-type 'sell)
              (find (lambda (x) (string=? active (car x))) actives-list))
@@ -156,11 +159,11 @@
               (hts! user-orders order-num order)
               (hts! db 'orders-quantity order-num)
               (hts! user-operations-by-id order-num order)
-              (send-ok-w-code order-num))
+              (send-ok-w-code order-num out))
             (begin
               (hts! user-operations-by-id equal-finded order)
-              (send-ok-w-code equal-finded)))))
-       (send-error "005")))))
+              (send-ok-w-code equal-finded out)))))
+       (send-error "005" out)))))
 
 (define (cancel-order-constructor user-operations-by-id db)
   (lambda (order-num)
@@ -172,36 +175,44 @@
         (send-ok))
        (send-error order-dont-exists)))))
 
-(define (show-available-actives db)
-  (let show-first ((available-actives (hash-table-keys (htr db 'actives-list))))
+(define (show-available-actives db out)
+  (let show-first ((available-actives (htr db 'actives-list)))
    (if (null? available-actives)
-     (send-ok)
+     (send-ok out)
      (begin
-       (display (car available-actives)) 
-       (newline)
+       (display (caar available-actives) out) 
+       (newline out)
        (show-first (cdr available-actives))))))
 
 (define (actives user-operations)
-  (lambda (active)
-    (let show-list ((actions (hash-table-values (htr user-operations active))))
+  (lambda (active out)
+    (let show-list ((actions (hash-table->alist (htr user-operations active))))
      (if (null? actions)
-       (send-ok)
+       (send-ok out)
        (begin
-         (display (cons active (cdar (hash-table->alist (car actions)))))
-         (newline)
+         (let ((action (car actions)))
+          (cond ((eq? (car action) 'sell)
+                 (display "vendas" out))
+                ((eq? (car action) 'buy)
+                 (display "compras" out)))
+          (newline out)
+          (display index)) out))
+         (newline out)
          (show-list (cdr actions)))))))
 
 ; --- Sessions ---
-(define (construct-session login db)
+(define (construct-session login db out)
   (let ((user-operations (ht-navigate/create db (list 'users login 'operations)))
         (user-operations-by-id (ht-navigate/create db (list 'users login 'operations-by-id))))
     (let ((sell (order-constructor user-operations user-operations-by-id db 'sell))
           (buy (order-constructor user-operations user-operations-by-id db 'buy))
           (actives (actives user-operations))
           (cancel (cancel-order-constructor user-operations-by-id db)))
-      (lambda (operation session)
+      (lambda (operation session out)
         (let ((op-type (car operation))
-              (args (cdr operation)))
+              (args (if (null? (cdr operation))
+                      (list out)
+                      (append (cdr operation) (list out)))))
           (cond ((string-ci=? op-type "vende")
                  (apply sell args))
                 ((string-ci=? op-type "compra")
@@ -209,23 +220,23 @@
                 ((string-ci=? op-type "cancela")
                  (apply cancel args))
                 ((string-ci=? op-type "catalogo")
-                 (show-available-actives db))
+                 (show-available-actives db out))
                 ((string-ci=? op-type "fui")
                  (begin
                    (set-car! session '())
-                   (send-ok)))
+                   (send-ok out)))
                 ((string-ci=? op-type "ativas")
                  (apply actives args))))))))
 
-(define (get-session login pass db)
+(define (get-session login pass db out)
   (if (validate-or-create-new-user login pass db)
     (begin
-      (send-ok)
-      (construct-session login db))
+      (send-ok out)
+      (construct-session login db out))
     (send-error invalid-user)))
 
 (define (load-and-get-initial-actions db) 
-  (let ((admin-session (get-session "admin" "admin" db)))
+  (let ((admin-session (get-session "admin" "admin" db (current-output-port))))
    (let ((lines (load-lines "/home/mateus/dev/projeto-pp/ativos")))
     (let add-and-get-action ((quantity (string->number (caar lines)))
                              (actions (cdr lines)))
@@ -233,7 +244,7 @@
         (list)
         (let ((action (car actions))
               (rem-actions (add-and-get-action (- quantity 1) (cdr actions))))
-          (admin-session (cons "vende" action) '())
+          (admin-session (cons "vende" action) '() (current-output-port))
           ; Return a list of lists with the actives to be defined as alist 
           (cons (list (car action)) rem-actions)))))))
 
@@ -244,18 +255,34 @@
   (hts! db 'actives-list '()) ; Set null for load firsts actives
   (hts! db 'actives-list (load-and-get-initial-actions db)))
 
-(define (get-next-command)
-  (string-split (read-line (current-input-port))))
+(define (get-next-command in)
+  (string-split (read-line in)))
 
-(define (run-command command db session)
+(define (run-command command db session out)
   (if (null? (car session)) 
     (if (string-ci=? (car command) "login")
       (let ((user (cadr command))
             (pass (caddr command)))
-        (set-car! session (get-session user pass db)))
-      (send-error invalid-user))
+        (set-car! session (get-session user pass db out)))
+      (send-error invalid-user out))
     (let ((actual-session (car session)))
-     (actual-session command session))))
+     (actual-session command session out)))
+  (flush-output out))
+
+(define (run-session session db socket)
+  (let-values (((in out) (tcp-accept socket)))
+    (let ((command (get-next-command in)))
+     (if (string-ci=? (car command) "fui")
+       (begin
+         (save-db db)
+         (send-message "ok" out))
+       (begin
+         (thread-start!
+           (make-thread
+             (lambda ()
+               (run-command command db session out)
+               (close-output-port out))))))))
+  (run-session session db socket))
 
 (define (server)
   (let ((db (restore-db)))
@@ -265,14 +292,7 @@
      (initialize-db db))
    (display "Pronto")
    (newline)
-   (let ((session (list '())))
-    (let process-command ((command (get-next-command)))
-     (if (string-ci=? (car command) "fui") 
-       (begin
-         (save-db db)
-         (send-message "ok"))
-       (begin
-         (run-command command db session)
-         (process-command (get-next-command))))))))
+   (let ((session (list '())) (socket (tcp-listen port)))
+    (run-session session db socket))))
 
 (server)

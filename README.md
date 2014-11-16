@@ -7,16 +7,29 @@
 
 ##Compilação
 
+Servidor:
 ```sh
 csc server.scm
+```
+
+Cliente de exemplo:
+```sh
+csc client.scm
+```
+
+Execute em terminais separados:
+```sh
 ./server
+```
+```sh
+./client
 ```
 
 ##Uso
 Informações de uso do projeto http://aleph0.info/cursos/pp/2014-q3/trabalho.html
 Fase atual:
 - [x] Faze 0
-- [ ] Faze I
+- [ ] Faze I (doing)
 - [ ] Faze II
 - [ ] Bônus A
 - [ ] Bônus B
