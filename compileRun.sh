@@ -1,0 +1,2 @@
+csc servidor.scm
+./servidor

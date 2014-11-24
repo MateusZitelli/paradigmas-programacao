@@ -15,12 +15,13 @@
     "ativas PTBR"
     "catalogo"
     "lista PTBR"
-    "lista EUA"))
+    "lista EUA"
+    "cotacao EUA"))
 
 (let run-commands ((commands commands))
  (if (null? commands)
    '()
-   (let-values (((in out) (tcp-connect "127.0.0.1" 9009)))
+   (let-values (((in out) (tcp-connect "127.0.0.1" 9010)))
                (display "< ")
                (display (car commands))
                (newline)
