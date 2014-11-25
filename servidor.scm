@@ -3,7 +3,7 @@
 (use srfi-69) ; Implements hash-tables
 (use tcp srfi-18)
 
-(define port 9010)
+(define port 9009)
 
 ; --- Errors ----
 (define invalid-user "001")

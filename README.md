@@ -29,7 +29,7 @@ Execute em terminais separados:
 Informações de uso do projeto http://aleph0.info/cursos/pp/2014-q3/trabalho.html
 Fase atual:
 - [x] Faze 0
-- [ ] Faze I (doing)
+- [x] Faze I
 - [ ] Faze II
 - [ ] Bônus A
 - [ ] Bônus B
