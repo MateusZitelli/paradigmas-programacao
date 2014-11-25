@@ -150,6 +150,56 @@
        (hts! users-hash-table login new-user-hash-table)
        #t)))))
 
+(define (execute-orders active order0 order1 order0-type order1-type db out)
+  (let ((active-orders-hash-table
+            (ht-navigate/create
+              db (list 'active-orders active)))
+        (quantity-difference
+          (- (order-quantity order0) (order-quantity order1))))
+    (cond 
+      ((positive? quantity-difference) 
+       (begin
+         (set-order-quantity! order0 quantity-difference)
+         (set-car! (cddr order1) (order-value order0))
+         (hts! 
+           (ht-navigate/create 
+             db (list 'executed-orders active order0-type))
+           (car order0) (cdr order0))
+         (hash-table-delete! (htr active-orders-hash-table order0-type)
+                             (car order0))
+         (search-and-execute-orders active order0-type order0 db out)))
+      ((negative? quantity-difference)
+       (begin
+         (set-order-quantity! order1 (- quantity-difference))
+         (set-car! (cddr order0) (order-value order1))
+         (hts! 
+           (ht-navigate/create 
+             db (list 'executed-orders active order1-type))
+           (car order1) (cdr order1))
+         (hash-table-delete! (htr active-orders-hash-table order1-type)
+                             (car order1))
+         (search-and-execute-orders active order0-type order0 db out)))
+      (else 
+        (begin
+          (let ((mean-value (/ (+ (order-value order0)
+                                  (order-value order1)) 2))) 
+            (set-car! (cddr order0) mean-value)
+            (set-car! (cddr order1) mean-value))
+
+          (hts! 
+            (ht-navigate/create 
+              db (list 'executed-orders active order0-type))
+            (car order0) (cdr order0))
+          (hash-table-delete! active-orders-hash-table
+                              (car order0))
+          (hts!  
+            (ht-navigate/create 
+              db (list 'executed-orders active order1-type))
+            (car order1) (cdr order1))
+          (hash-table-delete! active-orders-hash-table
+                              (car order1)))))))
+
+
 (define (search-and-execute-orders active order-type order db out)
   (let ((other-order-type (if (eq? order-type 'sell) 'buy 'sell))
         (order-comparator
@@ -160,65 +210,22 @@
             (hash-table->alist
               (ht-navigate/create
                 db (list 'active-orders active other-order-type))))
-          (active-orders-hash-table
-            (ht-navigate/create
-              db (list 'active-orders active other-order-type)))
           (order-fold-function
             (lambda (ord0 ord1)
               (if (order-comparator ord0 ord1) ord0 ord1)))
           (order-filter-function
             (lambda (other-order)
               (order-comparator order other-order))))
-      (if (> (length active-orders-list) 1)
+      (if (>= (length active-orders-list) 1)
         (let ((filtered-orders
                 (filter order-filter-function active-orders-list)))
-          (let ((best-order (fold order-fold-function
-                                  (car filtered-orders)
-                                  (cdr filtered-orders))))
-            (let ((quantity-difference
-                    (- (order-quantity order) (order-quantity best-order))))
-              (cond 
-                ((positive? quantity-difference) 
-                 (begin
-                   (set-order-quantity! order quantity-difference)
-                   (set-car! (cddr best-order) (order-value order))
-                   (hts! 
-                     (ht-navigate/create 
-                       db (list 'executed-orders active other-order-type))
-                     (car best-order) (cdr best-order))
-                   (hash-table-delete! active-orders-hash-table
-                                       (car best-order))
-                   (search-and-execute-orders active order-type order db out)))
-                ((negative? quantity-difference)
-                 (begin
-                   (set-order-quantity! best-order (- quantity-difference))
-                   (set-car! (cddr order) (order-value best-order))
-                   (hts! 
-                     (ht-navigate/create 
-                       db (list 'executed-orders active order-type))
-                     (car order) (cdr order))
-                   (hash-table-delete! active-orders-hash-table
-                                       (car order))
-                   (search-and-execute-orders active order-type order db out)))
-                (else 
-                  (begin
-                    (let ((mean-value (/ (+ (order-value order)
-                                            (order-value best-order)) 2))) 
-                      (set-car! (cddr order) mean-value)
-                      (set-car! (cddr best-order) mean-value))
-
-                    (hts! 
-                      (ht-navigate/create 
-                        db (list 'executed-orders active order-type))
-                      (car order) (cdr order))
-                    (hash-table-delete! active-orders-hash-table
-                                        (car order))
-                    (hts!  
-                      (ht-navigate/create 
-                        db (list 'executed-orders active other-order-type))
-                      (car best-order) (cdr best-order))
-                    (hash-table-delete! active-orders-hash-table
-                                        (car best-order))))))))))))
+          (if (not (null? filtered-orders))
+            (let ((best-order
+                    (fold order-fold-function
+                          (car filtered-orders)
+                          (cdr filtered-orders))))
+              (execute-orders
+                active order best-order order-type other-order-type db out))))))))
 
 
 ; --- Operations ---
@@ -257,7 +264,7 @@
             (begin
               (hts! user-operations-by-id equal-finded order)
               (search-and-execute-orders
-                active type (cons order-num order) db out)
+                active type (cons equal-finded order) db out)
               (send-ok-w-code equal-finded out))
             (begin
               (hts! orders order-num order)
@@ -289,69 +296,75 @@
        (newline out)
        (show-first (cdr available-actives))))))
 
-(define (actives user-operations db)
+(define (show-user-orders-in orders-table user-operations active out)
+   (let show-list ((actions (hash-table->alist (htr user-operations active))))
+    (if (null? actions)
+      (send-ok out)
+      (begin
+        (let ((action (car actions)))
+         (let
+          ((order-type-string (cond ((eq? (car action) 'sell) "V")
+                                    ((eq? (car action) 'buy) "C")))
+           (display-to-out-w-space (lambda (s)
+                                     (display s out) (display " " out))))
+          (let display-orders ((orders (hash-table->alist (cdr action))))
+           (if (null? orders)
+             '()
+             (let ((order (car orders)))
+              (if (hash-table-exists?
+                    ; Get orders of a certain type of an active
+                    (ht-navigate/create 
+                      orders-table
+                      (list active (car action)))
+                    ; Check if there is an operation with the same id
+                    (order-id order))
+                (begin
+                  (map display-to-out-w-space
+                       (list (order-id order)
+                             active
+                             (order-quantity order)
+                             order-type-string
+                             (order-value order)
+                             (order-moment order)))
+                  (newline out)))
+              (display-orders (cdr orders)))))))
+        (show-list (cdr actions))))))
+
+(define (activated-orders user-operations db)
   (lambda (active out)
-    (let ((active-orders (htr db 'active-orders)))
-     (let show-list ((actions (hash-table->alist (htr user-operations active))))
-      (if (null? actions)
-        (send-ok out)
-        (begin
-          (let ((action (car actions)))
-           (let
-            ((order-type-string
-               (cond ((eq? (car action) 'sell) "V")
-                     ((eq? (car action) 'buy) "C")))
-             (display-to-out-w-space
-               (lambda (s) (display s out) (display " " out))))
-            (let display-orders ((orders (hash-table->alist (cdr action))))
-             (if (null? orders)
-               '()
-               (let ((order (car orders)))
-                (if (hash-table-exists?
-                      ; Get orders of a certain type of an active
-                      (ht-navigate/create 
-                        active-orders
-                        (list active (car action)))
-                      ; Check if there is an operation with the same id
-                      (order-id order))
-                  (begin
-                    (map display-to-out-w-space
-                         (list (order-id order)
-                               active
-                               (order-quantity order)
-                               order-type-string
-                               (order-value order)
-                               (order-moment order)))
-                    (newline out)
-                    (display-orders (cdr orders)))))))))
-          (show-list (cdr actions))))))))
+    (show-user-orders-in (htr db 'active-orders) user-operations active out)))
+
+(define (executed-orders user-operations db)
+  (lambda (active out)
+    (show-user-orders-in (htr db 'executed-orders) user-operations active out)))
 
 (define (list-all-actions active db out)
   (let ((active-table (ht-navigate/create db (list 'active-orders active))))
-   (hash-table-map active-table
-                   (lambda (action operations)
-                     (let 
-                      ((top20-sorted-orders 
-                         (take
-                           (sort (hash-table->alist operations)
-                                 (lambda (v0 v1)
-                                   (cond ((eq? action 'sell)
-                                          (< (caddr v0) (caddr v1)))
-                                         ((eq? action 'buy)
-                                          (> (caddr v0) (caddr v1))))))
-                           20)))
-                      (map 
-                        (lambda (line)
-                          (let ((key (car line)) (quantity/value (cdr line)))
-                           (display key out) (display " " out)
-                           (cond ((eq? action 'sell)
-                                  (display "V " out))
-                                 ((eq? action 'buy)
-                                  (display "C " out)))
-                           (display (car quantity/value) out) (display " " out)
-                           (display (cadr quantity/value) out) (display " " out)
-                           (newline out)))
-                        top20-sorted-orders))))))
+   (hash-table-map 
+     active-table
+     (lambda (action operations)
+       (let 
+        ((top20-sorted-orders 
+           (take
+             (sort (hash-table->alist operations)
+                   (lambda (v0 v1)
+                     (cond ((eq? action 'sell)
+                            (< (caddr v0) (caddr v1)))
+                           ((eq? action 'buy)
+                            (> (caddr v0) (caddr v1))))))
+             20)))
+        (map 
+          (lambda (line)
+            (let ((key (car line)) (quantity/value (cdr line)))
+             (display key out) (display " " out)
+             (cond ((eq? action 'sell)
+                    (display "V " out))
+                   ((eq? action 'buy)
+                    (display "C " out)))
+             (display (car quantity/value) out) (display " " out)
+             (display (cadr quantity/value) out) (display " " out)
+             (newline out)))
+          top20-sorted-orders))))))
 
 (define (cotation active db out)
   (let 
@@ -412,7 +425,8 @@
         (get-order-constructor user-operations user-operations-by-id db 'sell))
       (buy
         (get-order-constructor user-operations user-operations-by-id db 'buy))
-      (actives (actives user-operations db))
+      (activated-orders (activated-orders user-operations db))
+      (executed-orders (executed-orders user-operations db))
       (cancel (cancel-order-constructor user-operations-by-id db)))
      (lambda (operation session out)
        (let ((op-type (car operation))
@@ -428,7 +442,9 @@
                ((string-ci=? op-type "catalogo")
                 (show-available-actives db out))
                ((string-ci=? op-type "ativas")
-                (apply actives args))
+                (apply activated-orders args))
+               ((string-ci=? op-type "executadas")
+                (apply executed-orders args))
                ((string-ci=? op-type "lista")
                 (list-all-actions (car args) db out))
                ((string-ci=? op-type "cotacao")
