@@ -28,9 +28,9 @@ Execute em terminais separados:
 ##Uso
 Informações de uso do projeto http://aleph0.info/cursos/pp/2014-q3/trabalho.html
 Fase atual:
-- [x] Faze 0
-- [x] Faze I
-- [ ] Faze II
-- [ ] Bônus A
+- [x] Fase 0
+- [x] Fase I
+- [x] Fase II
+- [x] Bônus A
 - [ ] Bônus B
 - [ ] Bônus C

@@ -9,13 +9,16 @@
 (define invalid-user "001")
 (define order-dont-exists "004")
 
+; --- Mutexes ---
+(define mutex-write-db (make-mutex))
+
 ; --- Alias ---
 (define hts! hash-table-set!)
 (define htr hash-table-ref)
 (define htr/default hash-table-ref/default)
 
 ; --- Utils ---
-(define (ht-navigate/create hash path-list)
+(define (ht-navigate/create! hash path-list)
   (let enter ((h hash)
               (l path-list))
     (if (or (null? l) (null? h))
@@ -39,7 +42,8 @@
 (define (order-value order) (caddr order))
 (define (order-moment order) (cadddr order))
 
-(define (set-order-quantity! order q) (set-car! (cdr order) q))
+(define (set-order-quantity! order q)
+  (set-car! (cdr order) q))
 
 (define (delete v l)
   (cond
@@ -152,7 +156,7 @@
 
 (define (execute-orders active order0 order1 order0-type order1-type db out)
   (let ((active-orders-hash-table
-            (ht-navigate/create
+            (ht-navigate/create!
               db (list 'active-orders active)))
         (quantity-difference
           (- (order-quantity order0) (order-quantity order1))))
@@ -162,7 +166,13 @@
          (set-order-quantity! order0 quantity-difference)
          (set-car! (cddr order1) (order-value order0))
          (hts! 
-           (ht-navigate/create 
+           (ht-navigate/create! 
+             db (list 'executed-orders active order0-type))
+           (car order0) (cdr order0))
+         (hash-table-delete! (htr active-orders-hash-table order0-type)
+                             (car order0))
+         (hts! 
+           (ht-navigate/create! 
              db (list 'executed-orders active order0-type))
            (car order0) (cdr order0))
          (hash-table-delete! (htr active-orders-hash-table order0-type)
@@ -173,7 +183,7 @@
          (set-order-quantity! order1 (- quantity-difference))
          (set-car! (cddr order0) (order-value order1))
          (hts! 
-           (ht-navigate/create 
+           (ht-navigate/create! 
              db (list 'executed-orders active order1-type))
            (car order1) (cdr order1))
          (hash-table-delete! (htr active-orders-hash-table order1-type)
@@ -187,13 +197,13 @@
             (set-car! (cddr order1) mean-value))
 
           (hts! 
-            (ht-navigate/create 
+            (ht-navigate/create! 
               db (list 'executed-orders active order0-type))
             (car order0) (cdr order0))
           (hash-table-delete! active-orders-hash-table
                               (car order0))
           (hts!  
-            (ht-navigate/create 
+            (ht-navigate/create! 
               db (list 'executed-orders active order1-type))
             (car order1) (cdr order1))
           (hash-table-delete! active-orders-hash-table
@@ -208,11 +218,11 @@
             (lambda (ord0 ord1) (>= (order-value ord0) (order-value ord1))))))
     (let ((active-orders-list
             (hash-table->alist
-              (ht-navigate/create
+              (ht-navigate/create!
                 db (list 'active-orders active other-order-type))))
           (order-fold-function
             (lambda (ord0 ord1)
-              (if (order-comparator ord0 ord1) ord0 ord1)))
+              (if (order-comparator ord0 ord1) ord1 ord0)))
           (order-filter-function
             (lambda (other-order)
               (order-comparator order other-order))))
@@ -256,9 +266,9 @@
                       (time->seconds (current-time))))
              (order-num (+ 1 (htr db 'last-order-id)))
              (user-orders
-               (ht-navigate/create user-operations (list active type)))
+               (ht-navigate/create! user-operations (list active type)))
              (orders 
-               (ht-navigate/create db (list 'active-orders active type))))
+               (ht-navigate/create! db (list 'active-orders active type))))
          (let ((equal-finded (find-and-add-orders user-orders order)))
           (if equal-finded
             (begin
@@ -313,7 +323,7 @@
              (let ((order (car orders)))
               (if (hash-table-exists?
                     ; Get orders of a certain type of an active
-                    (ht-navigate/create 
+                    (ht-navigate/create! 
                       orders-table
                       (list active (car action)))
                     ; Check if there is an operation with the same id
@@ -339,7 +349,7 @@
     (show-user-orders-in (htr db 'executed-orders) user-operations active out)))
 
 (define (list-all-actions active db out)
-  (let ((active-table (ht-navigate/create db (list 'active-orders active))))
+  (let ((active-table (ht-navigate/create! db (list 'active-orders active))))
    (hash-table-map 
      active-table
      (lambda (action operations)
@@ -368,7 +378,7 @@
 
 (define (cotation active db out)
   (let 
-   ((executed-orders (ht-navigate/create db (list 'executed-orders active))))
+   ((executed-orders (ht-navigate/create! db (list 'executed-orders active))))
    (let 
     ((executed-buys-list 
        (if (hash-table-exists? executed-orders 'buy) 
@@ -417,9 +427,9 @@
 ; --- Sessions ---
 (define (construct-session login db out)
   (let ((user-operations 
-          (ht-navigate/create db (list 'users login 'operations)))
+          (ht-navigate/create! db (list 'users login 'operations)))
         (user-operations-by-id
-          (ht-navigate/create db (list 'users login 'operations-by-id))))
+          (ht-navigate/create! db (list 'users login 'operations-by-id))))
     (let 
      ((sell
         (get-order-constructor user-operations user-operations-by-id db 'sell))
@@ -434,21 +444,37 @@
                      (list out)
                      (append (cdr operation) (list out)))))
          (cond ((string-ci=? op-type "vende")
-                (apply sell args))
+                (mutex-lock! mutex-write-db)               
+                (apply sell args)
+                (mutex-unlock! mutex-write-db))
                ((string-ci=? op-type "compra")
-                (apply buy args))
+                (mutex-lock! mutex-write-db)
+                (apply buy args)
+                (mutex-unlock! mutex-write-db))
                ((string-ci=? op-type "cancela")
-                (apply cancel args))
+                (mutex-lock! mutex-write-db)
+                (apply cancel args)
+                (mutex-unlock! mutex-write-db))
                ((string-ci=? op-type "catalogo")
-                (show-available-actives db out))
+                (mutex-lock! mutex-write-db)
+                (show-available-actives db out)
+                (mutex-unlock! mutex-write-db))
                ((string-ci=? op-type "ativas")
-                (apply activated-orders args))
+                (mutex-lock! mutex-write-db)
+                (apply activated-orders args)
+                (mutex-unlock! mutex-write-db))
                ((string-ci=? op-type "executadas")
-                (apply executed-orders args))
+                (mutex-lock! mutex-write-db)
+                (apply executed-orders args)
+                (mutex-unlock! mutex-write-db))
                ((string-ci=? op-type "lista")
-                (list-all-actions (car args) db out))
+                (mutex-lock! mutex-write-db)
+                (list-all-actions (car args) db out)
+                (mutex-unlock! mutex-write-db))
                ((string-ci=? op-type "cotacao")
-                (cotation (car args) db out))
+                (mutex-lock! mutex-write-db)
+                (cotation (car args) db out)
+                (mutex-unlock! mutex-write-db))
                ((string-ci=? op-type "fui")
                 (begin
                   (set-car! session '())
